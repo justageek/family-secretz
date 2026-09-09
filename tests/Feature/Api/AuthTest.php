@@ -3,7 +3,10 @@
 namespace Tests\Feature\Api;
 
 use App\Models\User;
+use Database\Seeders\AccountSeeder;
+use Database\Seeders\RoleSeeder;
 use Illuminate\Foundation\Testing\RefreshDatabase;
+use Illuminate\Support\Facades\Auth;
 use Laravel\Fortify\Contracts\TwoFactorAuthenticationProvider;
 use Laravel\Fortify\Features;
 use PragmaRX\Google2FA\Google2FA;
@@ -13,20 +16,79 @@ class AuthTest extends TestCase
 {
     use RefreshDatabase;
 
+    public function test_seeded_account_admin_can_login_and_receives_access_token(): void
+    {
+        $this->seed(RoleSeeder::class);
+        $this->seed(AccountSeeder::class);
+
+        $response = $this->postJson('/api/login', [
+            'email' => 'admin@smith-family.test',
+            'password' => 'password',
+        ]);
+
+        $response->assertStatus(200)
+            ->assertJsonStructure(['access_token', 'token_type', 'user' => ['id', 'name', 'email', 'account']])
+            ->assertJsonPath('user.email', 'admin@smith-family.test')
+            ->assertJsonPath('user.account.slug', 'smith-family');
+
+        $user = User::where('email', 'admin@smith-family.test')->first();
+        $this->assertTrue($user->hasRole('account admin'));
+    }
+
     public function test_user_can_register_and_receives_access_token(): void
     {
         $response = $this->postJson('/api/register', [
             'name' => 'Jane Doe',
+            'account_name' => 'The Doe Family',
             'email' => 'jane@example.com',
             'password' => 'password',
             'password_confirmation' => 'password',
         ]);
 
         $response->assertStatus(201)
-            ->assertJsonStructure(['access_token', 'token_type', 'user' => ['id', 'name', 'email']])
-            ->assertJsonPath('user.email', 'jane@example.com');
+            ->assertJsonStructure(['access_token', 'token_type', 'user' => ['id', 'name', 'email', 'account']])
+            ->assertJsonPath('user.email', 'jane@example.com')
+            ->assertJsonPath('user.account.name', 'The Doe Family')
+            ->assertJsonPath('user.account.slug', 'the-doe-family');
 
         $this->assertDatabaseHas('users', ['email' => 'jane@example.com']);
+        $this->assertDatabaseHas('accounts', ['slug' => 'the-doe-family']);
+
+        $user = User::where('email', 'jane@example.com')->first();
+        $this->assertTrue($user->hasRole('account admin'));
+    }
+
+    public function test_registration_requires_an_account_name(): void
+    {
+        $this->postJson('/api/register', [
+            'name' => 'Jane Doe',
+            'email' => 'jane@example.com',
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])->assertStatus(422)->assertJsonValidationErrors('account_name');
+
+        $this->assertDatabaseMissing('users', ['email' => 'jane@example.com']);
+    }
+
+    public function test_registering_with_a_duplicate_account_name_gets_a_unique_slug(): void
+    {
+        $this->postJson('/api/register', [
+            'name' => 'Jane Doe',
+            'account_name' => 'The Doe Family',
+            'email' => 'jane@example.com',
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ])->assertStatus(201);
+
+        $response = $this->postJson('/api/register', [
+            'name' => 'John Doe',
+            'account_name' => 'The Doe Family',
+            'email' => 'john@example.com',
+            'password' => 'password',
+            'password_confirmation' => 'password',
+        ]);
+
+        $response->assertStatus(201)->assertJsonPath('user.account.slug', 'the-doe-family-1');
     }
 
     public function test_user_can_login_and_receives_access_token(): void
@@ -155,6 +217,11 @@ class AuthTest extends TestCase
         $this->withToken($token)->postJson('/api/logout')
             ->assertOk()
             ->assertJsonPath('message', 'Logged out.');
+
+        // Sanctum's guard caches the resolved user for the lifetime of the
+        // container; forget it so this simulated request re-authenticates
+        // against the now-deleted token instead of reusing the cached user.
+        Auth::forgetGuards();
 
         $this->withToken($token)->getJson('/api/user')->assertStatus(401);
     }

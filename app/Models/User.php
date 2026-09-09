@@ -24,6 +24,13 @@ class User extends Authenticatable implements PasskeyUser
     use HasApiTokens, HasFactory, HasRoles, Notifiable, TwoFactorAuthenticatable, PasskeyAuthenticatable;
 
     /**
+     * The relationships that should always be loaded.
+     *
+     * @var array<int, string>
+     */
+    protected $with = ['account'];
+
+    /**
      * Get the attributes that should be cast.
      *
      * @return array<string, string>

@@ -11,6 +11,7 @@ use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
 use Illuminate\Validation\ValidationException;
 use Laravel\Fortify\Contracts\CreatesNewUsers;
+use Spatie\Permission\Models\Role;
 
 class CreateNewUser implements CreatesNewUsers
 {
@@ -52,9 +53,9 @@ class CreateNewUser implements CreatesNewUsers
                 'account_id' => $account->id,
             ]);
 
-            $user->assignRole('account admin');
+            $user->assignRole(Role::firstOrCreate(['name' => 'account admin']));
 
-            return $user;
+            return $user->setRelation('account', $account);
         });
     }
 
